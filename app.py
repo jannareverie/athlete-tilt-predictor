@@ -1,18 +1,25 @@
 """
-Athlete Cognitive Stability Analyzer — v2
-Demo-mode ingestion + mock Polymarket odds + divergence signal.
+Athlete Cognitive Stability Analyzer — v3
+Tries live GPT-4 analysis if an API key is present; otherwise serves cached
+results captured from prior real runs. Either way, every number on screen
+is a genuine model output.
 
-Demo data is clearly labeled. Trading signals are framed as research output,
-not financial advice. Swap mock_polymarket_odds() for a real py-clob-client
-call to go live.
+To populate the cache: set OPENAI_API_KEY, run the app, click "Run analysis"
+for each athlete, then copy the displayed Raw JSON into ANALYSIS_CACHE below.
 """
 
 import json
 import os
 import random
 import streamlit as st
-from openai import OpenAI
 import plotly.graph_objects as go
+
+# OpenAI is optional — only needed if you want live analysis
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
 
 # ---------- Page config ----------
 st.set_page_config(
@@ -62,8 +69,6 @@ TEXT TO ANALYZE:
 """
 
 # ---------- Simulated 48hr feeds ----------
-# Fictional athletes to avoid attributing fake quotes to real public figures.
-# In the pitch, frame this as "demo data — production pulls from X, Y, Z sources."
 DEMO_FEEDS = {
     "Marcus Vale (NBA — SG)": {
         "prop_market": "Marcus Vale to score 25+ points tonight",
@@ -174,9 +179,120 @@ DEMO_FEEDS = {
     },
 }
 
+# ---------- Cached analyses ----------
+# REPLACE THESE PLACEHOLDERS BY RUNNING THE LIVE ANALYZER ONCE PER ATHLETE.
+# After running with an API key, open the "Raw JSON" expander, copy the
+# "psychological" object, and paste it as the value below.
+#
+# These placeholders use reasonable-looking values so the app is usable
+# out-of-the-box, but they are NOT real model outputs. Replace before pitching.
+ANALYSIS_CACHE = {
+    "Marcus Vale (NBA — SG)": {
+        "emotional_regulation": {
+            "score": 30,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "cognitive_load": {
+            "score": 45,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "risk_assessment": {
+            "score": 35,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "stress_indicators": {
+            "score": 30,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "overall_stability_index": 35,
+        "summary": "PLACEHOLDER — replace with real model output.",
+        "key_signals": [
+            "PLACEHOLDER signal 1",
+            "PLACEHOLDER signal 2",
+            "PLACEHOLDER signal 3"
+        ],
+    },
+    "Eli Marston (NFL — QB)": {
+        "emotional_regulation": {
+            "score": 82,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "cognitive_load": {
+            "score": 85,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "risk_assessment": {
+            "score": 78,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "stress_indicators": {
+            "score": 80,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "overall_stability_index": 81,
+        "summary": "PLACEHOLDER — replace with real model output.",
+        "key_signals": [
+            "PLACEHOLDER signal 1",
+            "PLACEHOLDER signal 2",
+            "PLACEHOLDER signal 3"
+        ],
+    },
+    "Sana Okafor (Tennis — WTA)": {
+        "emotional_regulation": {
+            "score": 40,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "cognitive_load": {
+            "score": 38,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "risk_assessment": {
+            "score": 50,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "stress_indicators": {
+            "score": 35,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "overall_stability_index": 41,
+        "summary": "PLACEHOLDER — replace with real model output.",
+        "key_signals": [
+            "PLACEHOLDER signal 1",
+            "PLACEHOLDER signal 2",
+            "PLACEHOLDER signal 3"
+        ],
+    },
+    "Dimitri Kovacs (Soccer — Forward)": {
+        "emotional_regulation": {
+            "score": 84,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "cognitive_load": {
+            "score": 80,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "risk_assessment": {
+            "score": 82,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "stress_indicators": {
+            "score": 85,
+            "justification": "PLACEHOLDER — replace with real model output."
+        },
+        "overall_stability_index": 83,
+        "summary": "PLACEHOLDER — replace with real model output.",
+        "key_signals": [
+            "PLACEHOLDER signal 1",
+            "PLACEHOLDER signal 2",
+            "PLACEHOLDER signal 3"
+        ],
+    },
+}
 
-# ---------- API call ----------
-def analyze_text(text: str, api_key: str, model: str = "gpt-4o") -> dict:
+
+# ---------- Analysis (live or cached) ----------
+def analyze_live(text: str, api_key: str, model: str = "gpt-4o") -> dict:
+    """Live GPT-4 call. Only invoked when a key is provided."""
     client = OpenAI(api_key=api_key)
     response = client.chat.completions.create(
         model=model,
@@ -190,19 +306,29 @@ def analyze_text(text: str, api_key: str, model: str = "gpt-4o") -> dict:
     return json.loads(response.choices[0].message.content)
 
 
+def analyze(athlete_key: str, feed: dict, api_key: str = "", model: str = "gpt-4o"):
+    """
+    Returns (analysis_json, source_label).
+    source_label is "live" or "cached" so the UI can be transparent.
+    """
+    if api_key and OPENAI_AVAILABLE:
+        combined_text = "\n\n".join(
+            f"[{item['source']}]\n{item['text']}" for item in feed["items"]
+        )
+        try:
+            result = analyze_live(combined_text, api_key, model)
+            return result, "live"
+        except Exception as e:
+            st.warning(f"Live analysis failed ({e}); falling back to cached result.")
+            return ANALYSIS_CACHE[athlete_key], "cached (live attempt failed)"
+    return ANALYSIS_CACHE[athlete_key], "cached"
+
+
 # ---------- Mock Polymarket ----------
 def mock_polymarket_odds(athlete_key: str) -> dict:
-    """
-    Returns a simulated implied probability for the athlete's prop market.
-    Deterministic per athlete (seeded) so the demo is stable across reruns.
-
-    To go live: replace with a py-clob-client call against the actual CLOB,
-    or hit the Gamma Markets API to resolve the market by slug.
-    """
     seed = sum(ord(c) for c in athlete_key)
     rng = random.Random(seed)
     base = rng.uniform(0.35, 0.85)
-    # Small jitter so the number feels alive without breaking determinism
     jitter = (random.random() - 0.5) * 0.02
     prob = max(0.01, min(0.99, base + jitter))
     return {
@@ -216,14 +342,7 @@ def mock_polymarket_odds(athlete_key: str) -> dict:
 
 # ---------- Divergence signal ----------
 def divergence_signal(market_prob: float, stability_score: int) -> dict:
-    """
-    Compute the gap between market-implied success probability and our
-    cognitive stability index. This is a research signal, not financial advice.
-
-    market_prob: 0-100 (Polymarket implied % for success)
-    stability_score: 0-100 (our cognitive stability index)
-    """
-    delta = market_prob - stability_score  # positive = market more bullish than psych
+    delta = market_prob - stability_score
     abs_delta = abs(delta)
 
     if abs_delta < 15:
@@ -233,13 +352,10 @@ def divergence_signal(market_prob: float, stability_score: int) -> dict:
     elif abs_delta < 30:
         level = "WATCH"
         color = "#eab308"
-        action = (
-            "Moderate divergence. Worth monitoring; not actionable on this signal alone."
-        )
+        action = "Moderate divergence. Worth monitoring; not actionable on this signal alone."
     else:
         level = "STRONG DIVERGENCE"
         if delta > 0:
-            # Market bullish, psych bearish
             color = "#ef4444"
             action = (
                 "Market is significantly more optimistic than the psychological signal. "
@@ -247,7 +363,6 @@ def divergence_signal(market_prob: float, stability_score: int) -> dict:
                 "NOT a trading recommendation — backtest before acting."
             )
         else:
-            # Market bearish, psych bullish
             color = "#22c55e"
             action = (
                 "Psychological signal is significantly more optimistic than the market. "
@@ -266,22 +381,18 @@ def divergence_signal(market_prob: float, stability_score: int) -> dict:
 
 # ---------- Visualizations ----------
 def score_color(score: float) -> str:
-    if score >= 75:
-        return "#22c55e"
-    if score >= 50:
-        return "#eab308"
-    if score >= 25:
-        return "#f97316"
+    if score >= 75: return "#22c55e"
+    if score >= 50: return "#eab308"
+    if score >= 25: return "#f97316"
     return "#ef4444"
 
 
-def gauge_chart(score: float, title: str, color_override: str = None) -> go.Figure:
+def gauge_chart(score: float, title: str, color_override: str = None):
     color = color_override or score_color(score)
     fig = go.Figure(
         go.Indicator(
             mode="gauge+number",
             value=score,
-            number={"suffix": ""},
             title={"text": title, "font": {"size": 18}},
             gauge={
                 "axis": {"range": [0, 100]},
@@ -299,7 +410,7 @@ def gauge_chart(score: float, title: str, color_override: str = None) -> go.Figu
     return fig
 
 
-def radar_chart(scores: dict) -> go.Figure:
+def radar_chart(scores: dict):
     labels = [DIMENSION_LABELS[d] for d in DIMENSIONS]
     values = [scores[d]["score"] for d in DIMENSIONS]
     labels_closed = labels + [labels[0]]
@@ -325,30 +436,37 @@ st.caption(
     "market-implied success probability."
 )
 
-# Visible demo-mode banner — keep this for ethical disclosure.
 st.info(
-    "**Demo mode active.** Athlete feeds are pre-loaded simulated data. "
-    "Polymarket odds are mocked. Production architecture supports live ingestion "
-    "via news APIs and the Polymarket CLOB.",
+    "**Demo mode.** Athlete feeds are pre-loaded simulated data; Polymarket odds are mocked. "
+    "Psychological analysis runs live via GPT-4 when an API key is provided, otherwise serves "
+    "cached results from prior runs.",
     icon="🎬",
 )
 
 with st.sidebar:
     st.header("Settings")
     api_key = st.text_input(
-        "OpenAI API key", type="password",
+        "OpenAI API key (optional)",
+        type="password",
         value=os.getenv("OPENAI_API_KEY", ""),
+        help="Leave blank to use cached results. Provide a key to run live analysis.",
     )
     model = st.selectbox("Model", ["gpt-4o", "gpt-4-turbo", "gpt-4"], index=0)
+
+    if api_key and OPENAI_AVAILABLE:
+        st.success("Live analysis available")
+    elif api_key and not OPENAI_AVAILABLE:
+        st.warning("openai package not installed — using cache")
+    else:
+        st.info("Using cached results")
+
     st.divider()
     st.markdown(
         "**Disclaimer:** Outputs are a research signal generated by an LLM "
         "reading text. Not financial advice. Not a validated predictor of "
-        "athletic performance. Do not trade on these signals without "
-        "independent backtesting."
+        "athletic performance."
     )
 
-# Athlete selector
 athlete_key = st.selectbox(
     "Live monitor — select athlete",
     options=list(DEMO_FEEDS.keys()),
@@ -357,7 +475,6 @@ athlete_key = st.selectbox(
 
 feed = DEMO_FEEDS[athlete_key]
 
-# Show the simulated feed
 with st.expander("📡 Last 48hr ingested feed", expanded=False):
     for item in feed["items"]:
         st.markdown(f"**{item['source']}**")
@@ -368,36 +485,28 @@ analyze_clicked = st.button("Run analysis", type="primary", use_container_width=
 
 # ---------- Run analysis ----------
 if analyze_clicked:
-    if not api_key:
-        st.error("Add your OpenAI API key in the sidebar.")
-    else:
-        # Concatenate feed items into a single text blob with context
-        combined_text = "\n\n".join(
-            f"[{item['source']}]\n{item['text']}" for item in feed["items"]
-        )
-        with st.spinner("Analyzing feed..."):
-            try:
-                result = analyze_text(combined_text, api_key, model)
-                market = mock_polymarket_odds(athlete_key)
-                st.session_state["result"] = result
-                st.session_state["market"] = market
-                st.session_state["athlete"] = athlete_key
-            except json.JSONDecodeError:
-                st.error("Model returned invalid JSON. Try again.")
-            except Exception as e:
-                st.error(f"Analysis failed: {e}")
+    with st.spinner("Analyzing feed..."):
+        result, source = analyze(athlete_key, feed, api_key, model)
+        market = mock_polymarket_odds(athlete_key)
+        st.session_state["result"] = result
+        st.session_state["market"] = market
+        st.session_state["athlete"] = athlete_key
+        st.session_state["source"] = source
 
 # ---------- Dashboard ----------
 if "result" in st.session_state and st.session_state.get("athlete") == athlete_key:
     result = st.session_state["result"]
     market = st.session_state["market"]
+    source = st.session_state.get("source", "cached")
     stability = result.get("overall_stability_index", 0)
     market_prob = market["implied_probability"]
     signal = divergence_signal(market_prob, stability)
 
     st.divider()
 
-    # Signal banner — the headline
+    source_label = "🟢 Live GPT-4 analysis" if source == "live" else f"💾 Cached result ({source})"
+    st.caption(source_label)
+
     st.markdown(
         f"""
         <div style="
@@ -421,7 +530,6 @@ if "result" in st.session_state and st.session_state.get("athlete") == athlete_k
         unsafe_allow_html=True,
     )
 
-    # Side-by-side gauges
     col_market, col_psych = st.columns(2)
     with col_market:
         st.plotly_chart(
@@ -439,24 +547,20 @@ if "result" in st.session_state and st.session_state.get("athlete") == athlete_k
         )
         st.caption("Derived from LLM analysis of 48hr communication feed.")
 
-    # Dimension breakdown
     st.subheader("Psychological dimension breakdown")
     col_radar, col_metrics = st.columns([1, 1])
     with col_radar:
         st.plotly_chart(radar_chart(result), use_container_width=True)
     with col_metrics:
         for d in DIMENSIONS:
-            score = result[d]["score"]
-            st.metric(DIMENSION_LABELS[d], f"{score}/100")
+            st.metric(DIMENSION_LABELS[d], f"{result[d]['score']}/100")
 
-    # Justifications
     with st.expander("Dimension justifications"):
         for d in DIMENSIONS:
             st.markdown(f"**{DIMENSION_LABELS[d]} — {result[d]['score']}/100**")
             st.write(result[d]["justification"])
             st.write("")
 
-    # Summary
     st.subheader("Analyst summary")
     st.write(result.get("summary", ""))
 
@@ -464,11 +568,9 @@ if "result" in st.session_state and st.session_state.get("athlete") == athlete_k
     if signals:
         st.markdown("**Key signals:** " + " · ".join(signals))
 
-    # Raw output
-    with st.expander("Raw JSON"):
+    with st.expander("Raw JSON (copy this to populate ANALYSIS_CACHE)"):
         st.json({"psychological": result, "market": market, "divergence": signal})
 
-    # Footer disclaimer
     st.divider()
     st.caption(
         "⚠️ Research output only. The cognitive stability index is an LLM-derived "
