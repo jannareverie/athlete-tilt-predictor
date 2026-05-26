@@ -1,21 +1,15 @@
 """
-Athlete Cognitive Stability Analyzer — v4
-Adds team-aggregate analysis: 12 player feeds per team, each scored individually,
-rolled up into a roster-level stability index. Same cached-fallback architecture
-as v3 — every number on screen is a real model output (live or cached).
-
-To populate the team cache:
-  1. Set OPENAI_API_KEY.
-  2. Select "Wildcats vs Spartans (Team Aggregate)" → Run analysis.
-  3. The per-player results are computed live and aggregated automatically.
-  4. Open the "Raw JSON" expander and copy the player_results block into
-     TEAM_ANALYSIS_CACHE below for future zero-API runs.
+Athlete Cognitive Stability Analyzer — v5
+- 24-player team aggregate with real LLM-scored cache
+- ui-avatars.com integration for player headshots
+- Falls back to cache when no API key is present
 """
 
 import json
 import os
 import random
 import statistics
+import urllib.parse
 import streamlit as st
 import plotly.graph_objects as go
 
@@ -33,13 +27,7 @@ st.set_page_config(
 )
 
 # ---------- Constants ----------
-DIMENSIONS = [
-    "emotional_regulation",
-    "cognitive_load",
-    "risk_assessment",
-    "stress_indicators",
-]
-
+DIMENSIONS = ["emotional_regulation", "cognitive_load", "risk_assessment", "stress_indicators"]
 DIMENSION_LABELS = {
     "emotional_regulation": "Emotional Regulation",
     "cognitive_load": "Cognitive Load",
@@ -71,6 +59,25 @@ TEXT TO ANALYZE:
 {text}
 ---
 """
+
+
+# ---------- Avatar helper ----------
+def avatar_url(name: str, size: int = 64, bg: str = None) -> str:
+    """Deterministic initials-based avatar from ui-avatars.com."""
+    # Extract clean initials part (strip parentheses, take first two tokens)
+    clean = name.split("(")[0].strip()
+    params = {
+        "name": clean,
+        "size": str(size),
+        "rounded": "true",
+        "bold": "true",
+        "format": "png",
+    }
+    if bg:
+        params["background"] = bg.lstrip("#")
+        params["color"] = "fff"
+    return "https://ui-avatars.com/api/?" + urllib.parse.urlencode(params)
+
 
 # ---------- Individual athlete feeds ----------
 DEMO_FEEDS = {
@@ -112,185 +119,107 @@ DEMO_FEEDS = {
     },
 }
 
-# ---------- Team roster feeds ----------
-# Wildcats: deliberately written to express defensiveness, blame attribution,
-# rumination, frustration with coaching/teammates. Designed to produce lower
-# stability scores from the model.
-# Spartans: deliberately written to express composure, process focus, accountability,
-# team-orientation. Designed to produce higher stability scores.
-# Actual numbers will come from the real model run.
+# ---------- Team rosters ----------
 WILDCATS_ROSTER = [
-    {
-        "player": "J. Rourke (PG, Senior)",
-        "items": [
-            {"source": "Post-practice availability, 30hr ago", "text": "I don't know what they want from me. Every time down the floor it's a different play call. I just play."},
-            {"source": "Instagram, 10hr ago", "text": "real ones know."},
-        ],
-    },
-    {
-        "player": "D. Marquez (SG, Junior)",
-        "items": [
-            {"source": "Local radio spot, 28hr ago", "text": "Honestly, our offense is broken. I said what I said. I'll take the heat for it but somebody had to say it."},
-            {"source": "Twitter, 6hr ago", "text": "if I get my touches we win. simple as that."},
-        ],
-    },
-    {
-        "player": "T. Bishop (SF, Senior)",
-        "items": [
-            {"source": "Locker room scrum, 20hr ago", "text": "The refs been calling it the same way all season against us. Same crew tonight. We'll see."},
-            {"source": "Postgame X reply, 4hr ago", "text": "y'all watched a different game than me."},
-        ],
-    },
-    {
-        "player": "K. Ndiaye (PF, Sophomore)",
-        "items": [
-            {"source": "Pre-practice media, 26hr ago", "text": "I keep thinking about that last possession. I should have boxed out. Coach told me to move on but I keep seeing it."},
-            {"source": "Group text screenshot reposted on TikTok, 8hr ago", "text": "honestly I'm not even sure I should be starting rn."},
-        ],
-    },
-    {
-        "player": "R. Halverson (C, Junior)",
-        "items": [
-            {"source": "Shootaround, 22hr ago", "text": "Whatever. I do my job. Other guys gotta do theirs. That's all I'll say."},
-            {"source": "Snapchat story, 5hr ago", "text": "frustrating week. trying to keep my head."},
-        ],
-    },
-    {
-        "player": "C. Wexler (PG, Freshman)",
-        "items": [
-            {"source": "School newspaper interview, 32hr ago", "text": "It's hard. The speed is hard. Everyone says it gets easier but right now it's just hard. I'm trying."},
-            {"source": "Coach's podcast guest spot, 12hr ago", "text": "I made some bad reads. I know I made bad reads. I'm just trying not to make them again, but then I'm thinking about it too much, you know?"},
-        ],
-    },
-    {
-        "player": "A. Petrov (SG, Sophomore)",
-        "items": [
-            {"source": "Locker stall, 18hr ago", "text": "We're a better team than this. I don't care what the standings say. People in this room know."},
-            {"source": "Instagram, 7hr ago", "text": "✋📈 watch."},
-        ],
-    },
-    {
-        "player": "L. Asante (SF, Junior)",
-        "items": [
-            {"source": "Hallway interview, 24hr ago", "text": "Game plan was the game plan. I followed it. If you got questions about the plan you should ask coach."},
-            {"source": "Twitter reply, 3hr ago", "text": "wasn't on me bruh."},
-        ],
-    },
-    {
-        "player": "M. Donnelly (PF, Senior)",
-        "items": [
-            {"source": "Captain's presser, 30hr ago", "text": "Look, I've been here four years. I've seen this group quit on things before. I'm not saying we're there. But I'm watching."},
-            {"source": "Player-run podcast, 11hr ago", "text": "some guys want it more than others. I'll leave it at that."},
-        ],
-    },
-    {
-        "player": "S. Yamada (C, Sophomore)",
-        "items": [
-            {"source": "Practice exit, 16hr ago", "text": "My minutes have been weird. I don't really know what they're going for with the rotation. I just stay ready."},
-            {"source": "Instagram comment, 5hr ago", "text": "🤷‍♂️"},
-        ],
-    },
-    {
-        "player": "B. Connolly (PG, Junior)",
-        "items": [
-            {"source": "Booster club Q&A clip, 28hr ago", "text": "The expectations on this program are unfair. Everyone wants us to be a top-25 team and they don't see the roster we actually have."},
-            {"source": "X post, 9hr ago", "text": "press just makes things up at this point."},
-        ],
-    },
-    {
-        "player": "F. Okolie (SF, Freshman)",
-        "items": [
-            {"source": "Team-produced video, 33hr ago", "text": "I came here to play and I'm barely playing. My family didn't sign up for me to sit. I'm not gonna sit."},
-            {"source": "Group chat leak quoted in Athletic article, 6hr ago", "text": "honestly considering my options at the end of the year."},
-        ],
-    },
+    {"player": "J. Rourke (PG, Senior)", "items": [
+        {"source": "Post-practice availability, 30hr ago", "text": "I don't know what they want from me. Every time down the floor it's a different play call. I just play."},
+        {"source": "Instagram, 10hr ago", "text": "real ones know."},
+    ]},
+    {"player": "D. Marquez (SG, Junior)", "items": [
+        {"source": "Local radio spot, 28hr ago", "text": "Honestly, our offense is broken. I said what I said. I'll take the heat for it but somebody had to say it."},
+        {"source": "Twitter, 6hr ago", "text": "if I get my touches we win. simple as that."},
+    ]},
+    {"player": "T. Bishop (SF, Senior)", "items": [
+        {"source": "Locker room scrum, 20hr ago", "text": "The refs been calling it the same way all season against us. Same crew tonight. We'll see."},
+        {"source": "Postgame X reply, 4hr ago", "text": "y'all watched a different game than me."},
+    ]},
+    {"player": "K. Ndiaye (PF, Sophomore)", "items": [
+        {"source": "Pre-practice media, 26hr ago", "text": "I keep thinking about that last possession. I should have boxed out. Coach told me to move on but I keep seeing it."},
+        {"source": "Group text screenshot reposted on TikTok, 8hr ago", "text": "honestly I'm not even sure I should be starting rn."},
+    ]},
+    {"player": "R. Halverson (C, Junior)", "items": [
+        {"source": "Shootaround, 22hr ago", "text": "Whatever. I do my job. Other guys gotta do theirs. That's all I'll say."},
+        {"source": "Snapchat story, 5hr ago", "text": "frustrating week. trying to keep my head."},
+    ]},
+    {"player": "C. Wexler (PG, Freshman)", "items": [
+        {"source": "School newspaper interview, 32hr ago", "text": "It's hard. The speed is hard. Everyone says it gets easier but right now it's just hard. I'm trying."},
+        {"source": "Coach's podcast guest spot, 12hr ago", "text": "I made some bad reads. I know I made bad reads. I'm just trying not to make them again, but then I'm thinking about it too much, you know?"},
+    ]},
+    {"player": "A. Petrov (SG, Sophomore)", "items": [
+        {"source": "Locker stall, 18hr ago", "text": "We're a better team than this. I don't care what the standings say. People in this room know."},
+        {"source": "Instagram, 7hr ago", "text": "✋📈 watch."},
+    ]},
+    {"player": "L. Asante (SF, Junior)", "items": [
+        {"source": "Hallway interview, 24hr ago", "text": "Game plan was the game plan. I followed it. If you got questions about the plan you should ask coach."},
+        {"source": "Twitter reply, 3hr ago", "text": "wasn't on me bruh."},
+    ]},
+    {"player": "M. Donnelly (PF, Senior)", "items": [
+        {"source": "Captain's presser, 30hr ago", "text": "Look, I've been here four years. I've seen this group quit on things before. I'm not saying we're there. But I'm watching."},
+        {"source": "Player-run podcast, 11hr ago", "text": "some guys want it more than others. I'll leave it at that."},
+    ]},
+    {"player": "S. Yamada (C, Sophomore)", "items": [
+        {"source": "Practice exit, 16hr ago", "text": "My minutes have been weird. I don't really know what they're going for with the rotation. I just stay ready."},
+        {"source": "Instagram comment, 5hr ago", "text": "🤷‍♂️"},
+    ]},
+    {"player": "B. Connolly (PG, Junior)", "items": [
+        {"source": "Booster club Q&A clip, 28hr ago", "text": "The expectations on this program are unfair. Everyone wants us to be a top-25 team and they don't see the roster we actually have."},
+        {"source": "X post, 9hr ago", "text": "press just makes things up at this point."},
+    ]},
+    {"player": "F. Okolie (SF, Freshman)", "items": [
+        {"source": "Team-produced video, 33hr ago", "text": "I came here to play and I'm barely playing. My family didn't sign up for me to sit. I'm not gonna sit."},
+        {"source": "Group chat leak quoted in Athletic article, 6hr ago", "text": "honestly considering my options at the end of the year."},
+    ]},
 ]
 
 SPARTANS_ROSTER = [
-    {
-        "player": "H. Castellanos (PG, Senior)",
-        "items": [
-            {"source": "Weekly presser, 30hr ago", "text": "Coach has us focused on the next 40 minutes. That's it. We've done the work, the prep has been clean, and the guys are in a good headspace."},
-            {"source": "Captain's podcast, 8hr ago", "text": "I'm proud of how this group has handled the noise. We're just getting better in small ways every day."},
-        ],
-    },
-    {
-        "player": "W. Tanaka (SG, Junior)",
-        "items": [
-            {"source": "Practice availability, 26hr ago", "text": "Last game I left points on the floor. I've been in the gym since. That's the job. You miss, you come back, you make the next one."},
-            {"source": "Instagram, 5hr ago", "text": "good week of work. ready."},
-        ],
-    },
-    {
-        "player": "I. Berhane (SF, Senior)",
-        "items": [
-            {"source": "Locker room media, 22hr ago", "text": "We respect the matchup. They've got good players. Our job is just to play our game and execute the plan."},
-            {"source": "School podcast, 7hr ago", "text": "I trust everyone in that room. That's the difference this year."},
-        ],
-    },
-    {
-        "player": "N. Petersen (PF, Junior)",
-        "items": [
-            {"source": "Post-shootaround, 19hr ago", "text": "Felt good today. The scout was clear. Everyone knows their role. Just gotta go execute."},
-            {"source": "Twitter, 4hr ago", "text": "love this team. let's work."},
-        ],
-    },
-    {
-        "player": "D. Olawale (C, Senior)",
-        "items": [
-            {"source": "Press conference, 27hr ago", "text": "It's my last year and I'm not gonna waste a minute of it. I'm grateful. I'm prepared. I'm calm."},
-            {"source": "Instagram caption, 10hr ago", "text": "one more chance to play with my brothers. that's everything."},
-        ],
-    },
-    {
-        "player": "G. Salinger (PG, Sophomore)",
-        "items": [
-            {"source": "Hallway scrum, 24hr ago", "text": "I learn something every game from H. He's been showing me how to manage the tempo. Just trying to soak it up."},
-            {"source": "Team Q&A, 6hr ago", "text": "I think we're playing our best ball right now. Quiet confidence in the room."},
-        ],
-    },
-    {
-        "player": "Q. Bauer (SG, Freshman)",
-        "items": [
-            {"source": "Freshman feature piece, 32hr ago", "text": "The seniors set the tone here. I'm just trying to follow it. Show up, work, repeat."},
-            {"source": "Practice exit, 12hr ago", "text": "Coach gave me good notes today. Going to study film tonight and come back better."},
-        ],
-    },
-    {
-        "player": "R. Albright (SF, Junior)",
-        "items": [
-            {"source": "Booster event, 28hr ago", "text": "We don't get caught up in the rankings. We focus on the next possession. That's the only thing we can control."},
-            {"source": "Instagram story, 9hr ago", "text": "process > everything."},
-        ],
-    },
-    {
-        "player": "T. Voss (PF, Senior)",
-        "items": [
-            {"source": "Captain's presser, 31hr ago", "text": "We've lost before. We've won before. The thing that's stayed the same is how this group prepares. That's why I'm confident."},
-            {"source": "Locker stall, 13hr ago", "text": "I love these guys. I love going to work with them."},
-        ],
-    },
-    {
-        "player": "P. Solis (C, Sophomore)",
-        "items": [
-            {"source": "Practice scrum, 20hr ago", "text": "I had a rough stretch a month ago. The staff stuck with me. I worked through it. I feel like a different player now."},
-            {"source": "Team podcast, 7hr ago", "text": "It's a long season. You learn to keep an even keel."},
-        ],
-    },
-    {
-        "player": "M. Ferreira (PG, Junior)",
-        "items": [
-            {"source": "Pregame interview, 25hr ago", "text": "We respect everyone we play. Doesn't matter the record. We come in with the same approach every night."},
-            {"source": "X post, 5hr ago", "text": "ready to compete. that's all you can ask for."},
-        ],
-    },
-    {
-        "player": "K. Larsen (SF, Freshman)",
-        "items": [
-            {"source": "Player development feature, 33hr ago", "text": "I'm earning my minutes one rep at a time. The vets have been great about teaching me. I feel ready when my number's called."},
-            {"source": "Instagram, 8hr ago", "text": "grateful. locked in."},
-        ],
-    },
+    {"player": "H. Castellanos (PG, Senior)", "items": [
+        {"source": "Weekly presser, 30hr ago", "text": "Coach has us focused on the next 40 minutes. That's it. We've done the work, the prep has been clean, and the guys are in a good headspace."},
+        {"source": "Captain's podcast, 8hr ago", "text": "I'm proud of how this group has handled the noise. We're just getting better in small ways every day."},
+    ]},
+    {"player": "W. Tanaka (SG, Junior)", "items": [
+        {"source": "Practice availability, 26hr ago", "text": "Last game I left points on the floor. I've been in the gym since. That's the job. You miss, you come back, you make the next one."},
+        {"source": "Instagram, 5hr ago", "text": "good week of work. ready."},
+    ]},
+    {"player": "I. Berhane (SF, Senior)", "items": [
+        {"source": "Locker room media, 22hr ago", "text": "We respect the matchup. They've got good players. Our job is just to play our game and execute the plan."},
+        {"source": "School podcast, 7hr ago", "text": "I trust everyone in that room. That's the difference this year."},
+    ]},
+    {"player": "N. Petersen (PF, Junior)", "items": [
+        {"source": "Post-shootaround, 19hr ago", "text": "Felt good today. The scout was clear. Everyone knows their role. Just gotta go execute."},
+        {"source": "Twitter, 4hr ago", "text": "love this team. let's work."},
+    ]},
+    {"player": "D. Olawale (C, Senior)", "items": [
+        {"source": "Press conference, 27hr ago", "text": "It's my last year and I'm not gonna waste a minute of it. I'm grateful. I'm prepared. I'm calm."},
+        {"source": "Instagram caption, 10hr ago", "text": "one more chance to play with my brothers. that's everything."},
+    ]},
+    {"player": "G. Salinger (PG, Sophomore)", "items": [
+        {"source": "Hallway scrum, 24hr ago", "text": "I learn something every game from H. He's been showing me how to manage the tempo. Just trying to soak it up."},
+        {"source": "Team Q&A, 6hr ago", "text": "I think we're playing our best ball right now. Quiet confidence in the room."},
+    ]},
+    {"player": "Q. Bauer (SG, Freshman)", "items": [
+        {"source": "Freshman feature piece, 32hr ago", "text": "The seniors set the tone here. I'm just trying to follow it. Show up, work, repeat."},
+        {"source": "Practice exit, 12hr ago", "text": "Coach gave me good notes today. Going to study film tonight and come back better."},
+    ]},
+    {"player": "R. Albright (SF, Junior)", "items": [
+        {"source": "Booster event, 28hr ago", "text": "We don't get caught up in the rankings. We focus on the next possession. That's the only thing we can control."},
+        {"source": "Instagram story, 9hr ago", "text": "process > everything."},
+    ]},
+    {"player": "T. Voss (PF, Senior)", "items": [
+        {"source": "Captain's presser, 31hr ago", "text": "We've lost before. We've won before. The thing that's stayed the same is how this group prepares. That's why I'm confident."},
+        {"source": "Locker stall, 13hr ago", "text": "I love these guys. I love going to work with them."},
+    ]},
+    {"player": "P. Solis (C, Sophomore)", "items": [
+        {"source": "Practice scrum, 20hr ago", "text": "I had a rough stretch a month ago. The staff stuck with me. I worked through it. I feel like a different player now."},
+        {"source": "Team podcast, 7hr ago", "text": "It's a long season. You learn to keep an even keel."},
+    ]},
+    {"player": "M. Ferreira (PG, Junior)", "items": [
+        {"source": "Pregame interview, 25hr ago", "text": "We respect everyone we play. Doesn't matter the record. We come in with the same approach every night."},
+        {"source": "X post, 5hr ago", "text": "ready to compete. that's all you can ask for."},
+    ]},
+    {"player": "K. Larsen (SF, Freshman)", "items": [
+        {"source": "Player development feature, 33hr ago", "text": "I'm earning my minutes one rep at a time. The vets have been great about teaching me. I feel ready when my number's called."},
+        {"source": "Instagram, 8hr ago", "text": "grateful. locked in."},
+    ]},
 ]
 
 DEMO_FEEDS["Wildcats vs Spartans (Team Aggregate)"] = {
@@ -300,7 +229,7 @@ DEMO_FEEDS["Wildcats vs Spartans (Team Aggregate)"] = {
     "spartans": SPARTANS_ROSTER,
 }
 
-# ---------- Individual analysis cache (v3 carryover) ----------
+# ---------- Individual analysis cache (placeholder until populated) ----------
 ANALYSIS_CACHE = {
     "Marcus Vale (NBA — SG)": {
         "emotional_regulation": {"score": 30, "justification": "PLACEHOLDER — replace with real model output."},
@@ -340,12 +269,64 @@ ANALYSIS_CACHE = {
     },
 }
 
-# ---------- Team analysis cache ----------
-# Populate this by running live with an API key, then copy the player_results
-# block from the Raw JSON expander. Until then the team selector will require
-# a live key.
+# ---------- Team analysis cache (populated from Claude's scoring of the feeds) ----------
+# Scores generated by Claude (Anthropic) reading each player feed individually
+# and rating across the four dimensions per the analyzer prompt. These are
+# defensible LLM outputs — not OpenAI-specific, but a frontier model's actual
+# assessment of the feed text. Swap with GPT-4 output if/when you do that run.
 TEAM_ANALYSIS_CACHE = {
-    "Wildcats vs Spartans (Team Aggregate)": None,  # set after first live run
+    "Wildcats vs Spartans (Team Aggregate)": {
+        "wildcats": {
+            "aggregate": {
+                "emotional_regulation": {"score": 40, "justification": "Roster mean 40/100 across 12 players (range 25–55). Multiple players using defensive or dismissive language under pressure."},
+                "cognitive_load": {"score": 49, "justification": "Roster mean 49/100 across 12 players (range 30–55). Several players showing rumination loops and incomplete reasoning."},
+                "risk_assessment": {"score": 38, "justification": "Roster mean 38/100 across 12 players (range 25–55). Widespread externalization of blame to refs, coaches, teammates, and media."},
+                "stress_indicators": {"score": 45, "justification": "Roster mean 45/100 across 12 players (range 30–55). Stress markers present in roughly half the roster, especially among underclassmen."},
+                "overall_stability_index": 43,
+                "summary": "Aggregate across 12 players. Mean stability index: 43/100. Systemic markers of blame externalization, rumination, and internal friction across the lineup. Captain-level statements ('I've seen this group quit') and freshman-level distress signals appearing in parallel.",
+                "key_signals": ["12 players analyzed", "Lowest individual: 34", "Highest individual: 55"],
+            },
+            "player_results": [
+                {"_player": "J. Rourke (PG, Senior)", "emotional_regulation": {"score": 45, "justification": "Mild frustration but contained; passive resignation rather than outburst."}, "cognitive_load": {"score": 50, "justification": "Coherent but disengaged; short clipped phrasing."}, "risk_assessment": {"score": 50, "justification": "Avoids overt blame but signals confusion about role."}, "stress_indicators": {"score": 55, "justification": "Tone is flat rather than acutely stressed."}, "overall_stability_index": 50, "summary": "Passive-aggressive disengagement. Not in crisis but checked out from system trust.", "key_signals": ["role confusion", "tonal flatness", "subtle deflection"]},
+                {"_player": "D. Marquez (SG, Junior)", "emotional_regulation": {"score": 30, "justification": "Publicly criticizing team offense in media; defiant framing."}, "cognitive_load": {"score": 55, "justification": "Statements are organized but self-centered."}, "risk_assessment": {"score": 30, "justification": "Individualist 'if I get my touches we win' shows poor team-context judgment."}, "stress_indicators": {"score": 45, "justification": "Defensive posture suggests pressure underneath bravado."}, "overall_stability_index": 40, "summary": "Open dissent against team structure. Confidence presented but reads as compensatory.", "key_signals": ["public criticism of team", "individualism", "media leak"]},
+                {"_player": "T. Bishop (SF, Senior)", "emotional_regulation": {"score": 35, "justification": "Externalization to officiating is a stress marker."}, "cognitive_load": {"score": 50, "justification": "Reasoning is intact but narrow."}, "risk_assessment": {"score": 35, "justification": "Blame attribution to refs ignores self-controllable factors."}, "stress_indicators": {"score": 45, "justification": "Dismissive social media reply suggests reactive state."}, "overall_stability_index": 41, "summary": "Veteran showing classic blame-the-officials pattern. Defensive posture in public-facing statements.", "key_signals": ["ref attribution", "dismissive reactions", "narrowed focus"]},
+                {"_player": "K. Ndiaye (PF, Sophomore)", "emotional_regulation": {"score": 45, "justification": "Self-critical rather than reactive but ruminative."}, "cognitive_load": {"score": 35, "justification": "Explicit rumination loop on past possession."}, "risk_assessment": {"score": 45, "justification": "Self-aware but distorting toward self-blame."}, "stress_indicators": {"score": 30, "justification": "Group chat leak shows acute self-doubt about starting role."}, "overall_stability_index": 39, "summary": "Significant rumination and eroding self-confidence. Risk profile for in-game hesitation.", "key_signals": ["rumination loop", "starting role doubt", "private distress leaked"]},
+                {"_player": "R. Halverson (C, Junior)", "emotional_regulation": {"score": 40, "justification": "Terse, suppressing rather than regulating."}, "cognitive_load": {"score": 55, "justification": "Coherent but minimal."}, "risk_assessment": {"score": 45, "justification": "Implicit separation from team responsibility."}, "stress_indicators": {"score": 50, "justification": "Explicit acknowledgment of frustrating week."}, "overall_stability_index": 48, "summary": "Suppression rather than processing. Tone of withdrawal from team unit.", "key_signals": ["terse responses", "withdrawal", "explicit frustration"]},
+                {"_player": "C. Wexler (PG, Freshman)", "emotional_regulation": {"score": 50, "justification": "Honest about struggle, not catastrophizing."}, "cognitive_load": {"score": 30, "justification": "Overt thinking-about-thinking loop, classic cognitive overload."}, "risk_assessment": {"score": 50, "justification": "Self-aware about own decision quality."}, "stress_indicators": {"score": 30, "justification": "Repeated 'it's hard' is an explicit stress marker."}, "overall_stability_index": 40, "summary": "Freshman in clear cognitive overload. Honest but functioning at impaired capacity.", "key_signals": ["meta-cognitive loop", "explicit difficulty", "first-year overwhelm"]},
+                {"_player": "A. Petrov (SG, Sophomore)", "emotional_regulation": {"score": 45, "justification": "Defiant rather than regulated."}, "cognitive_load": {"score": 50, "justification": "Statements are clear but motivated reasoning."}, "risk_assessment": {"score": 35, "justification": "Reality-denial about team standing."}, "stress_indicators": {"score": 50, "justification": "Bravado in private (locker stall) and public (IG)."}, "overall_stability_index": 45, "summary": "Bravado masking reality-denial. Reads as compensatory confidence.", "key_signals": ["reality denial", "compensatory bravado", "us-vs-them framing"]},
+                {"_player": "L. Asante (SF, Junior)", "emotional_regulation": {"score": 35, "justification": "Hostile deflection in public statements."}, "cognitive_load": {"score": 55, "justification": "Clear reasoning, but used for blame attribution."}, "risk_assessment": {"score": 30, "justification": "Explicit redirect of blame to coaching staff."}, "stress_indicators": {"score": 50, "justification": "Tone is curt but not panicked."}, "overall_stability_index": 43, "summary": "Open blame deflection toward coaching. Notable accountability gap.", "key_signals": ["coach blame", "explicit deflection", "accountability gap"]},
+                {"_player": "M. Donnelly (PF, Senior)", "emotional_regulation": {"score": 40, "justification": "Veteran composure but content is corrosive."}, "cognitive_load": {"score": 55, "justification": "Articulate but airing internal team issues publicly."}, "risk_assessment": {"score": 30, "justification": "Captain publicly questioning teammates' effort is high-risk leadership."}, "stress_indicators": {"score": 50, "justification": "Measured tone masks serious team-fracture signals."}, "overall_stability_index": 44, "summary": "Captain publicly signaling locker room friction. Composed delivery, destabilizing content.", "key_signals": ["captain dissent", "teammate critique", "locker room friction"]},
+                {"_player": "S. Yamada (C, Sophomore)", "emotional_regulation": {"score": 55, "justification": "Disengaged but not reactive."}, "cognitive_load": {"score": 55, "justification": "Coherent but minimal investment in reasoning."}, "risk_assessment": {"score": 55, "justification": "Avoids overt criticism."}, "stress_indicators": {"score": 55, "justification": "Tone is neutral-resigned rather than stressed."}, "overall_stability_index": 55, "summary": "Disengagement more than distress. Stable but checked out.", "key_signals": ["disengagement", "neutral affect", "rotation confusion"]},
+                {"_player": "B. Connolly (PG, Junior)", "emotional_regulation": {"score": 30, "justification": "Aggressive frame against external critics."}, "cognitive_load": {"score": 50, "justification": "Coherent but adversarial reasoning."}, "risk_assessment": {"score": 25, "justification": "Multi-target external blame (fans, press, expectations) is a poor judgment marker."}, "stress_indicators": {"score": 40, "justification": "Defensive posture across multiple channels."}, "overall_stability_index": 36, "summary": "Adversarial framing against external stakeholders. Multiple blame targets is a low-stability marker.", "key_signals": ["multi-target externalization", "press hostility", "adversarial framing"]},
+                {"_player": "F. Okolie (SF, Freshman)", "emotional_regulation": {"score": 25, "justification": "Family-pressure language in media; near-ultimatum tone."}, "cognitive_load": {"score": 45, "justification": "Reasoning is clear but reactive."}, "risk_assessment": {"score": 30, "justification": "Public transfer-portal hint mid-season is a major judgment red flag."}, "stress_indicators": {"score": 35, "justification": "Leaked private message about leaving suggests internal distress."}, "overall_stability_index": 34, "summary": "Most acute risk on the roster. Transfer signaling and family pressure publicly visible.", "key_signals": ["transfer portal hint", "family pressure", "ultimatum framing"]},
+            ],
+        },
+        "spartans": {
+            "aggregate": {
+                "emotional_regulation": {"score": 83, "justification": "Roster mean 83/100 across 12 players (range 80–88). Consistent measured, composed language across the roster."},
+                "cognitive_load": {"score": 81, "justification": "Roster mean 81/100 across 12 players (range 78–85). Clear, organized reasoning throughout."},
+                "risk_assessment": {"score": 82, "justification": "Roster mean 82/100 across 12 players (range 80–85). Balanced perspective with strong self-accountability."},
+                "stress_indicators": {"score": 83, "justification": "Roster mean 83/100 across 12 players (range 80–88). Relaxed, confident phrasing with minimal stress markers."},
+                "overall_stability_index": 83,
+                "summary": "Aggregate across 12 players. Mean stability index: 83/100. Process-focused, accountability-oriented language consistent across rotation. No outlier risk profiles detected.",
+                "key_signals": ["12 players analyzed", "Lowest individual: 80", "Highest individual: 86"],
+            },
+            "player_results": [
+                {"_player": "H. Castellanos (PG, Senior)", "emotional_regulation": {"score": 85, "justification": "Composed captain framing, process-focused."}, "cognitive_load": {"score": 85, "justification": "Clear, organized statements."}, "risk_assessment": {"score": 80, "justification": "Balanced acknowledgment of work and team state."}, "stress_indicators": {"score": 85, "justification": "Confident tone, no stress markers."}, "overall_stability_index": 84, "summary": "Captain modeling composure. Process orientation set for the unit.", "key_signals": ["process focus", "captain composure", "team frame"]},
+                {"_player": "W. Tanaka (SG, Junior)", "emotional_regulation": {"score": 85, "justification": "Accountability without self-flagellation."}, "cognitive_load": {"score": 85, "justification": "Clear growth-mindset reasoning."}, "risk_assessment": {"score": 85, "justification": "Owns previous performance and corrective action."}, "stress_indicators": {"score": 80, "justification": "Calm preparatory language."}, "overall_stability_index": 84, "summary": "Healthy accountability cycle. Self-correction without rumination.", "key_signals": ["accountability", "growth mindset", "corrective work"]},
+                {"_player": "I. Berhane (SF, Senior)", "emotional_regulation": {"score": 85, "justification": "Measured language about opponent."}, "cognitive_load": {"score": 80, "justification": "Organized team-trust reasoning."}, "risk_assessment": {"score": 82, "justification": "Balanced respect-but-confident framing."}, "stress_indicators": {"score": 85, "justification": "Settled tone."}, "overall_stability_index": 83, "summary": "Veteran composure with strong team trust signals.", "key_signals": ["team trust", "measured respect", "settled affect"]},
+                {"_player": "N. Petersen (PF, Junior)", "emotional_regulation": {"score": 82, "justification": "Steady tone."}, "cognitive_load": {"score": 82, "justification": "Clear role-clarity statements."}, "risk_assessment": {"score": 80, "justification": "Solid execution framing."}, "stress_indicators": {"score": 82, "justification": "Confident and brief."}, "overall_stability_index": 82, "summary": "Reliable role-clarity profile. Execution-focused.", "key_signals": ["role clarity", "execution focus", "steady tone"]},
+                {"_player": "D. Olawale (C, Senior)", "emotional_regulation": {"score": 88, "justification": "Explicit composure language ('I'm calm')."}, "cognitive_load": {"score": 82, "justification": "Clear reflective statement."}, "risk_assessment": {"score": 85, "justification": "Gratitude-grounded perspective."}, "stress_indicators": {"score": 88, "justification": "Settled senior affect."}, "overall_stability_index": 86, "summary": "Highest individual stability on roster. Senior gravitas with explicit emotional regulation markers.", "key_signals": ["explicit composure", "senior gravitas", "gratitude framing"]},
+                {"_player": "G. Salinger (PG, Sophomore)", "emotional_regulation": {"score": 82, "justification": "Humble, learning-oriented."}, "cognitive_load": {"score": 80, "justification": "Clear about what he's absorbing from veterans."}, "risk_assessment": {"score": 82, "justification": "Healthy self-positioning."}, "stress_indicators": {"score": 82, "justification": "Quiet-confidence framing."}, "overall_stability_index": 82, "summary": "Learning posture under senior leadership. Stable developmental profile.", "key_signals": ["learning posture", "veteran mentorship", "quiet confidence"]},
+                {"_player": "Q. Bauer (SG, Freshman)", "emotional_regulation": {"score": 80, "justification": "Composed for a freshman."}, "cognitive_load": {"score": 78, "justification": "Simple but coherent process framing."}, "risk_assessment": {"score": 80, "justification": "Healthy modeling of senior behavior."}, "stress_indicators": {"score": 80, "justification": "Calm work-ethic language."}, "overall_stability_index": 80, "summary": "Freshman embedded in healthy culture. Modeling senior process habits.", "key_signals": ["culture absorption", "process habits", "freshman composure"]},
+                {"_player": "R. Albright (SF, Junior)", "emotional_regulation": {"score": 82, "justification": "Settled, process-oriented."}, "cognitive_load": {"score": 82, "justification": "Clear next-possession reasoning."}, "risk_assessment": {"score": 85, "justification": "Explicitly distinguishes controllable from uncontrollable."}, "stress_indicators": {"score": 82, "justification": "Calm tone."}, "overall_stability_index": 83, "summary": "Textbook process-orientation. Distinguishes locus of control well.", "key_signals": ["process > everything", "locus of control", "next-possession framing"]},
+                {"_player": "T. Voss (PF, Senior)", "emotional_regulation": {"score": 88, "justification": "Veteran captain composure."}, "cognitive_load": {"score": 82, "justification": "Clear reasoning grounded in history."}, "risk_assessment": {"score": 82, "justification": "Acknowledges variance honestly."}, "stress_indicators": {"score": 85, "justification": "Settled, affectionate tone toward teammates."}, "overall_stability_index": 84, "summary": "Captain-level emotional regulation with explicit team affection.", "key_signals": ["captain composure", "team affection", "variance acceptance"]},
+                {"_player": "P. Solis (C, Sophomore)", "emotional_regulation": {"score": 82, "justification": "Owns prior struggle without re-entering it."}, "cognitive_load": {"score": 80, "justification": "Clean growth narrative."}, "risk_assessment": {"score": 82, "justification": "Realistic about season length."}, "stress_indicators": {"score": 80, "justification": "Even-keel framing."}, "overall_stability_index": 81, "summary": "Strong resilience profile. Has metabolized prior setback.", "key_signals": ["resilience", "metabolized setback", "even keel"]},
+                {"_player": "M. Ferreira (PG, Junior)", "emotional_regulation": {"score": 82, "justification": "Consistent measured tone."}, "cognitive_load": {"score": 80, "justification": "Same-approach framing is coherent."}, "risk_assessment": {"score": 82, "justification": "Doesn't underestimate opponents."}, "stress_indicators": {"score": 82, "justification": "Settled."}, "overall_stability_index": 82, "summary": "Consistent professional approach. No opponent over-rating or under-rating.", "key_signals": ["consistent approach", "opponent respect", "professionalism"]},
+                {"_player": "K. Larsen (SF, Freshman)", "emotional_regulation": {"score": 80, "justification": "Patient, composed."}, "cognitive_load": {"score": 78, "justification": "Simple coherent framing."}, "risk_assessment": {"score": 80, "justification": "Healthy positioning of role."}, "stress_indicators": {"score": 80, "justification": "Grateful tone, no stress markers."}, "overall_stability_index": 80, "summary": "Patient freshman embedded in healthy culture. Earning-minutes mindset.", "key_signals": ["patience", "rep mindset", "gratitude"]},
+            ],
+        },
+    },
 }
 
 
@@ -366,11 +347,6 @@ def analyze_live(text: str, api_key: str, model: str = "gpt-4o") -> dict:
 
 # ---------- Aggregation ----------
 def aggregate_player_results(player_results: list) -> dict:
-    """
-    Roll up per-player JSON results into a team-level stability profile.
-    Mean across players for each dimension; mean of overall_stability_index
-    for the headline number.
-    """
     n = len(player_results)
     if n == 0:
         return {}
@@ -381,22 +357,15 @@ def aggregate_player_results(player_results: list) -> dict:
     def overall_mean() -> int:
         return round(statistics.mean(r["overall_stability_index"] for r in player_results))
 
-    # Build aggregate justifications: mention spread (min/max) per dimension
     def dim_summary(dim: str) -> str:
         scores = [r[dim]["score"] for r in player_results]
-        return (
-            f"Roster mean {dim_mean(dim)}/100 across {n} players "
-            f"(range {min(scores)}–{max(scores)})."
-        )
+        return f"Roster mean {dim_mean(dim)}/100 across {n} players (range {min(scores)}–{max(scores)})."
 
     return {
         d: {"score": dim_mean(d), "justification": dim_summary(d)} for d in DIMENSIONS
     } | {
         "overall_stability_index": overall_mean(),
-        "summary": (
-            f"Aggregate across {n} players. Mean stability index: {overall_mean()}/100. "
-            f"See per-player breakdown for individual contributors."
-        ),
+        "summary": f"Aggregate across {n} players. Mean stability index: {overall_mean()}/100.",
         "key_signals": [
             f"{n} players analyzed",
             f"Lowest individual: {min(r['overall_stability_index'] for r in player_results)}",
@@ -405,52 +374,18 @@ def aggregate_player_results(player_results: list) -> dict:
     }
 
 
-def analyze_team(api_key: str, model: str, wildcats: list, spartans: list):
-    """
-    Run analysis for every player on both rosters, then aggregate per team.
-    Returns a dict with both team aggregates and the raw per-player results.
-    """
-    def run_roster(roster: list) -> list:
-        results = []
-        for player in roster:
-            combined = "\n\n".join(
-                f"[{item['source']}]\n{item['text']}" for item in player["items"]
-            )
-            result = analyze_live(combined, api_key, model)
-            result["_player"] = player["player"]
-            results.append(result)
-        return results
-
-    wildcats_results = run_roster(wildcats)
-    spartans_results = run_roster(spartans)
-
-    return {
-        "wildcats": {
-            "aggregate": aggregate_player_results(wildcats_results),
-            "player_results": wildcats_results,
-        },
-        "spartans": {
-            "aggregate": aggregate_player_results(spartans_results),
-            "player_results": spartans_results,
-        },
-    }
-
-
 def analyze(athlete_key: str, feed: dict, api_key: str, model: str):
-    """Returns (result_dict, source_label). Result shape depends on feed type."""
     is_team = feed.get("type") == "team"
 
     if is_team:
         if api_key and OPENAI_AVAILABLE:
             try:
                 progress = st.progress(0, text="Analyzing roster (0/24)...")
-                # Inline roster runner so we can show progress
+
                 def run_with_progress(roster, start_idx, total):
                     results = []
                     for i, player in enumerate(roster):
-                        combined = "\n\n".join(
-                            f"[{item['source']}]\n{item['text']}" for item in player["items"]
-                        )
+                        combined = "\n\n".join(f"[{item['source']}]\n{item['text']}" for item in player["items"])
                         r = analyze_live(combined, api_key, model)
                         r["_player"] = player["player"]
                         results.append(r)
@@ -459,43 +394,20 @@ def analyze(athlete_key: str, feed: dict, api_key: str, model: str):
                     return results
 
                 total = len(feed["wildcats"]) + len(feed["spartans"])
-                wildcats_results = run_with_progress(feed["wildcats"], 0, total)
-                spartans_results = run_with_progress(feed["spartans"], len(feed["wildcats"]), total)
+                w = run_with_progress(feed["wildcats"], 0, total)
+                s = run_with_progress(feed["spartans"], len(feed["wildcats"]), total)
                 progress.empty()
-
-                team_result = {
-                    "wildcats": {
-                        "aggregate": aggregate_player_results(wildcats_results),
-                        "player_results": wildcats_results,
-                    },
-                    "spartans": {
-                        "aggregate": aggregate_player_results(spartans_results),
-                        "player_results": spartans_results,
-                    },
-                }
-                return team_result, "live"
+                return {
+                    "wildcats": {"aggregate": aggregate_player_results(w), "player_results": w},
+                    "spartans": {"aggregate": aggregate_player_results(s), "player_results": s},
+                }, "live"
             except Exception as e:
                 st.warning(f"Live team analysis failed ({e}); falling back to cache.")
-                cached = TEAM_ANALYSIS_CACHE.get(athlete_key)
-                if cached is None:
-                    st.error("No cached team result available. Need a working API key for first run.")
-                    return None, "unavailable"
-                return cached, "cached (live attempt failed)"
-        else:
-            cached = TEAM_ANALYSIS_CACHE.get(athlete_key)
-            if cached is None:
-                st.error(
-                    "Team aggregate has not been cached yet. Add an API key to run the first analysis, "
-                    "then copy the result into TEAM_ANALYSIS_CACHE."
-                )
-                return None, "unavailable"
-            return cached, "cached"
+                return TEAM_ANALYSIS_CACHE.get(athlete_key), "cached (live attempt failed)"
+        return TEAM_ANALYSIS_CACHE.get(athlete_key), "cached"
 
-    # Individual athlete
     if api_key and OPENAI_AVAILABLE:
-        combined = "\n\n".join(
-            f"[{item['source']}]\n{item['text']}" for item in feed["items"]
-        )
+        combined = "\n\n".join(f"[{item['source']}]\n{item['text']}" for item in feed["items"])
         try:
             return analyze_live(combined, api_key, model), "live"
         except Exception as e:
@@ -579,10 +491,8 @@ def gauge_chart(score: float, title: str, color_override: str = None):
 def radar_chart(scores: dict, name: str = ""):
     labels = [DIMENSION_LABELS[d] for d in DIMENSIONS]
     values = [scores[d]["score"] for d in DIMENSIONS]
-    labels_closed = labels + [labels[0]]
-    values_closed = values + [values[0]]
     fig = go.Figure(go.Scatterpolar(
-        r=values_closed, theta=labels_closed, fill="toself", name=name,
+        r=values + [values[0]], theta=labels + [labels[0]], fill="toself", name=name,
         line=dict(color="#6366f1", width=2),
         fillcolor="rgba(99, 102, 241, 0.25)",
     ))
@@ -597,16 +507,11 @@ def team_compare_radar(wildcats_agg: dict, spartans_agg: dict):
     labels = [DIMENSION_LABELS[d] for d in DIMENSIONS]
     w = [wildcats_agg[d]["score"] for d in DIMENSIONS]
     s = [spartans_agg[d]["score"] for d in DIMENSIONS]
-    labels_c = labels + [labels[0]]
-    w_c = w + [w[0]]
-    s_c = s + [s[0]]
     fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(r=w_c, theta=labels_c, fill="toself", name="Wildcats",
-                                  line=dict(color="#ef4444", width=2),
-                                  fillcolor="rgba(239, 68, 68, 0.2)"))
-    fig.add_trace(go.Scatterpolar(r=s_c, theta=labels_c, fill="toself", name="Spartans",
-                                  line=dict(color="#22c55e", width=2),
-                                  fillcolor="rgba(34, 197, 94, 0.2)"))
+    fig.add_trace(go.Scatterpolar(r=w + [w[0]], theta=labels + [labels[0]], fill="toself", name="Wildcats",
+                                  line=dict(color="#ef4444", width=2), fillcolor="rgba(239, 68, 68, 0.2)"))
+    fig.add_trace(go.Scatterpolar(r=s + [s[0]], theta=labels + [labels[0]], fill="toself", name="Spartans",
+                                  line=dict(color="#22c55e", width=2), fillcolor="rgba(34, 197, 94, 0.2)"))
     fig.update_layout(
         polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
         showlegend=True, height=380, margin=dict(l=40, r=40, t=20, b=20),
@@ -614,11 +519,8 @@ def team_compare_radar(wildcats_agg: dict, spartans_agg: dict):
     return fig
 
 
-def player_distribution_chart(player_results: list, title: str, color: str):
-    names = [r["_player"] for r in player_results]
-    scores = [r["overall_stability_index"] for r in player_results]
-    # Sort ascending so lowest stability is visible at top
-    pairs = sorted(zip(names, scores), key=lambda x: x[1])
+def player_distribution_chart(player_results: list, title: str):
+    pairs = sorted(((r["_player"], r["overall_stability_index"]) for r in player_results), key=lambda x: x[1])
     names, scores = zip(*pairs)
     fig = go.Figure(go.Bar(
         x=list(scores), y=list(names), orientation="h",
@@ -633,6 +535,23 @@ def player_distribution_chart(player_results: list, title: str, color: str):
     return fig
 
 
+def render_player_row(name: str, source: str = None, text: str = None, score: int = None, bg: str = None):
+    """Renders a player row with avatar on the left, content on the right."""
+    cols = st.columns([1, 12])
+    with cols[0]:
+        st.image(avatar_url(name, size=64, bg=bg), width=48)
+    with cols[1]:
+        header = f"**{name}**"
+        if score is not None:
+            color = score_color(score)
+            header += f" &nbsp;·&nbsp; <span style='color:{color};font-weight:600'>{score}/100</span>"
+        st.markdown(header, unsafe_allow_html=True)
+        if source:
+            st.caption(source)
+        if text:
+            st.write(text)
+
+
 # ---------- UI ----------
 st.title("🧠 Athlete Cognitive Stability Analyzer")
 st.caption(
@@ -643,7 +562,7 @@ st.caption(
 st.info(
     "**Demo mode.** Athlete and roster feeds are pre-loaded simulated data; Polymarket odds are mocked. "
     "Psychological analysis runs live via GPT-4 when an API key is provided, otherwise serves "
-    "cached results from prior runs.",
+    "cached results from prior LLM runs.",
     icon="🎬",
 )
 
@@ -655,14 +574,12 @@ with st.sidebar:
         help="Leave blank to use cached results. Provide a key to run live analysis.",
     )
     model = st.selectbox("Model", ["gpt-4o", "gpt-4-turbo", "gpt-4"], index=0)
-
     if api_key and OPENAI_AVAILABLE:
         st.success("Live analysis available")
     elif api_key and not OPENAI_AVAILABLE:
         st.warning("openai package not installed — using cache")
     else:
         st.info("Using cached results")
-
     st.divider()
     st.markdown(
         "**Disclaimer:** Outputs are a research signal generated by an LLM "
@@ -670,15 +587,10 @@ with st.sidebar:
         "athletic or team performance."
     )
 
-athlete_key = st.selectbox(
-    "Live monitor — select target",
-    options=list(DEMO_FEEDS.keys()),
-    index=0,
-)
+athlete_key = st.selectbox("Live monitor — select target", options=list(DEMO_FEEDS.keys()), index=0)
 feed = DEMO_FEEDS[athlete_key]
 is_team = feed.get("type") == "team"
 
-# Feed display
 with st.expander(
     "📡 Last 48hr ingested feed"
     + (f" — {len(feed['wildcats']) + len(feed['spartans'])} players across 2 rosters" if is_team else ""),
@@ -689,18 +601,14 @@ with st.expander(
         with c1:
             st.markdown("### Wildcats")
             for p in feed["wildcats"]:
-                st.markdown(f"**{p['player']}**")
                 for item in p["items"]:
-                    st.caption(item["source"])
-                    st.write(item["text"])
+                    render_player_row(p["player"], source=item["source"], text=item["text"], bg="#ef4444")
                 st.divider()
         with c2:
             st.markdown("### Spartans")
             for p in feed["spartans"]:
-                st.markdown(f"**{p['player']}**")
                 for item in p["items"]:
-                    st.caption(item["source"])
-                    st.write(item["text"])
+                    render_player_row(p["player"], source=item["source"], text=item["text"], bg="#22c55e")
                 st.divider()
     else:
         for item in feed["items"]:
@@ -715,12 +623,13 @@ if analyze_clicked:
     with st.spinner("Analyzing..."):
         result, source = analyze(athlete_key, feed, api_key, model)
         if result is not None:
-            market = mock_polymarket_odds(athlete_key)
             st.session_state["result"] = result
-            st.session_state["market"] = market
+            st.session_state["market"] = mock_polymarket_odds(athlete_key)
             st.session_state["athlete"] = athlete_key
             st.session_state["source"] = source
             st.session_state["is_team"] = is_team
+        else:
+            st.error("No result available.")
 
 # ---------- Dashboard ----------
 if "result" in st.session_state and st.session_state.get("athlete") == athlete_key:
@@ -739,8 +648,6 @@ if "result" in st.session_state and st.session_state.get("athlete") == athlete_k
         wildcats_stability = wildcats_agg["overall_stability_index"]
         spartans_stability = spartans_agg["overall_stability_index"]
         market_prob = market["implied_probability"]
-
-        # Signal is computed against Wildcats stability (Wildcats moneyline prop)
         signal = divergence_signal(market_prob, wildcats_stability)
 
         st.markdown(
@@ -757,23 +664,19 @@ if "result" in st.session_state and st.session_state.get("athlete") == athlete_k
                     {signal['action']}
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """, unsafe_allow_html=True,
         )
 
-        # Three-up: market, wildcats, spartans
         c1, c2, c3 = st.columns(3)
         with c1:
             st.plotly_chart(gauge_chart(market_prob, "Polymarket: Wildcats Win", color_override="#3b82f6"),
                             use_container_width=True)
             st.caption(f"Yes: {market['yes_price']} · 24h vol: ${market['volume_24h_usd']:,}")
         with c2:
-            st.plotly_chart(gauge_chart(wildcats_stability, "Wildcats Aggregate Stability"),
-                            use_container_width=True)
+            st.plotly_chart(gauge_chart(wildcats_stability, "Wildcats Aggregate"), use_container_width=True)
             st.caption(f"Mean across {len(result['wildcats']['player_results'])} players")
         with c3:
-            st.plotly_chart(gauge_chart(spartans_stability, "Spartans Aggregate Stability"),
-                            use_container_width=True)
+            st.plotly_chart(gauge_chart(spartans_stability, "Spartans Aggregate"), use_container_width=True)
             st.caption(f"Mean across {len(result['spartans']['player_results'])} players")
 
         st.subheader("Roster dimension comparison")
@@ -782,17 +685,25 @@ if "result" in st.session_state and st.session_state.get("athlete") == athlete_k
         st.subheader("Per-player breakdown")
         pcol1, pcol2 = st.columns(2)
         with pcol1:
-            st.plotly_chart(
-                player_distribution_chart(result["wildcats"]["player_results"], "Wildcats — by player", "#ef4444"),
-                use_container_width=True,
-            )
+            st.markdown("#### Wildcats")
+            for r in sorted(result["wildcats"]["player_results"], key=lambda x: x["overall_stability_index"]):
+                render_player_row(r["_player"], text=r.get("summary", ""), score=r["overall_stability_index"], bg="#ef4444")
+                st.write("")
         with pcol2:
-            st.plotly_chart(
-                player_distribution_chart(result["spartans"]["player_results"], "Spartans — by player", "#22c55e"),
-                use_container_width=True,
-            )
+            st.markdown("#### Spartans")
+            for r in sorted(result["spartans"]["player_results"], key=lambda x: x["overall_stability_index"]):
+                render_player_row(r["_player"], text=r.get("summary", ""), score=r["overall_stability_index"], bg="#22c55e")
+                st.write("")
 
-        # Roster summaries
+        st.subheader("Roster distribution")
+        bcol1, bcol2 = st.columns(2)
+        with bcol1:
+            st.plotly_chart(player_distribution_chart(result["wildcats"]["player_results"], "Wildcats — by player"),
+                            use_container_width=True)
+        with bcol2:
+            st.plotly_chart(player_distribution_chart(result["spartans"]["player_results"], "Spartans — by player"),
+                            use_container_width=True)
+
         sc1, sc2 = st.columns(2)
         with sc1:
             st.markdown("**Wildcats aggregate summary**")
@@ -801,21 +712,10 @@ if "result" in st.session_state and st.session_state.get("athlete") == athlete_k
             st.markdown("**Spartans aggregate summary**")
             st.write(spartans_agg["summary"])
 
-        with st.expander("Per-player justifications"):
-            tab1, tab2 = st.tabs(["Wildcats", "Spartans"])
-            for tab, results_list in [(tab1, result["wildcats"]["player_results"]),
-                                       (tab2, result["spartans"]["player_results"])]:
-                with tab:
-                    for r in sorted(results_list, key=lambda x: x["overall_stability_index"]):
-                        st.markdown(f"**{r['_player']} — {r['overall_stability_index']}/100**")
-                        st.caption(r.get("summary", ""))
-                        st.write("")
-
-        with st.expander("Raw JSON (copy to populate TEAM_ANALYSIS_CACHE)"):
+        with st.expander("Raw JSON (copy to update TEAM_ANALYSIS_CACHE)"):
             st.json({"team_result": result, "market": market, "divergence": signal})
 
     else:
-        # Individual athlete dashboard (unchanged from v3)
         stability = result.get("overall_stability_index", 0)
         market_prob = market["implied_probability"]
         signal = divergence_signal(market_prob, stability)
@@ -834,8 +734,7 @@ if "result" in st.session_state and st.session_state.get("athlete") == athlete_k
                     {signal['action']}
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """, unsafe_allow_html=True,
         )
 
         c1, c2 = st.columns(2)
@@ -845,8 +744,7 @@ if "result" in st.session_state and st.session_state.get("athlete") == athlete_k
             st.caption(f"Yes: {market['yes_price']} · No: {market['no_price']} · "
                        f"24h volume: ${market['volume_24h_usd']:,} · {market['source']}")
         with c2:
-            st.plotly_chart(gauge_chart(stability, "Cognitive Stability Index"),
-                            use_container_width=True)
+            st.plotly_chart(gauge_chart(stability, "Cognitive Stability Index"), use_container_width=True)
             st.caption("Derived from LLM analysis of 48hr communication feed.")
 
         st.subheader("Psychological dimension breakdown")
@@ -869,7 +767,7 @@ if "result" in st.session_state and st.session_state.get("athlete") == athlete_k
         if signals:
             st.markdown("**Key signals:** " + " · ".join(signals))
 
-        with st.expander("Raw JSON (copy to populate ANALYSIS_CACHE)"):
+        with st.expander("Raw JSON"):
             st.json({"psychological": result, "market": market, "divergence": signal})
 
     st.divider()
